@@ -13,7 +13,9 @@
         "https://amazon.com/*",
         "https://www.amazon.com/*",
         "https://www.amazon.jp/*",
-        "https://www.amazon.co.jp/*"
+        "https://www.amazon.co.jp/*",
+        "https://www.amazon.co.uk/*",
+        "https://www.amazon.de/*"
       ],
       "js": [
         "dist/content.js"
