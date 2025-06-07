@@ -166,5 +166,41 @@
         }
       }
     }
-  }  
+  }
+  >div:first-child{
+    >div:first-child{
+      >div:first-child{
+        >div:first-child{ // overlay
+          background: none !important;
+          >div{
+            background: none !important;
+          }
+        }
+        >div:nth-child(3){
+          >div:nth-child(2){ // player controls
+            position: fixed;
+            bottom: 10px;
+            left: 5px;
+            z-index: 1;
+            .atvwebplayersdk-fastseekback-button,
+            .atvwebplayersdk-playpause-button,
+            .atvwebplayersdk-fastseekforward-button{
+              width: 35px;
+              height: 35px;
+              margin: 0 3px;
+            }
+          }  
+        }
+      } 
+    }
+  }
+  .atvwebplayersdk-title-text{
+    font-size: 1.7vw;
+  }
+  .atvwebplayersdk-subtitle-text{
+    font-size: 1.2vw;
+  }
+  .atvwebplayersdk-bottompanel-container{
+    padding-left: 200px;
+  }
 }
