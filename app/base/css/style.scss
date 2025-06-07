@@ -179,15 +179,18 @@
         >div:nth-child(3){
           >div:nth-child(2){ // player controls
             position: fixed;
-            bottom: 10px;
+            bottom: 14px;
             left: 5px;
             z-index: 1;
+            margin: 0;
+            padding: 0;
             .atvwebplayersdk-fastseekback-button,
             .atvwebplayersdk-playpause-button,
             .atvwebplayersdk-fastseekforward-button{
               width: 35px;
               height: 35px;
               margin: 0 3px;
+              border-width: 10px;
             }
           }  
         }
@@ -195,12 +198,52 @@
     }
   }
   .atvwebplayersdk-title-text{
-    font-size: 1.7vw;
+    font-size: 24px;
   }
   .atvwebplayersdk-subtitle-text{
-    font-size: 1.2vw;
+    font-size: 21px;
   }
   .atvwebplayersdk-bottompanel-container{
     padding-left: 200px;
+    padding-right: 50px;
+    padding-bottom: 25px;
+    padding-top: 25px;
+    .atvwebplayersdk-seekbar-container{
+      .atvwebplayersdk-trickplay-container{
+        margin-bottom: 41px;
+      }
+      >div:first-child{
+        >div:nth-child(2){
+          padding-top: 10px;
+          padding-bottom: 10px;
+          height: 3px;
+        } 
+      }
+    }
+    .atvwebplayersdk-seekbar-range{
+      height: 3px;
+    }
+    .atvwebplayersdk-infobar-container{
+      font-size: 15px;
+      >div:first-child{
+        font-size: 15px;
+        >div:first-child{
+          height: 18px;
+          .atvwebplayersdk-timeindicator-text{
+            font-size: 16px;
+          }
+        }
+        .atvwebplayersdk-nexttitle-button{
+          font-size: 16px;
+          height: 18px;
+          div{
+            font-size: 16px;
+          }
+          @media(max-width: 748px){
+            display: none;
+          }
+        }
+      }
+    }
   }
 }
