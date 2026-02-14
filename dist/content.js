@@ -44,6 +44,9 @@
     var SEEK_SECONDS_BIG = 30;
 
     var _scrimSeen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+    var _scrimStyleInjected = false;
+    var SCRIM_ATTR = 'data-vuic-scrim';
+    var _scrimRaf = 0;
 
     function isPrimeLikeHost(){
       var host = (window.location && window.location.hostname) ? window.location.hostname : '';
@@ -104,42 +107,98 @@
       return Math.min(Math.max(n, min), max);
     }
 
-    function getPrimaryVideo(){
-      var videos = document.querySelectorAll('video');
-      if(!videos || videos.length === 0){
-        return null;
+    function scoreVideo(v, rect, doc){
+      if(!rect || rect.width <= 0 || rect.height <= 0){
+        return -1;
       }
 
+      var area = rect.width * rect.height;
+      var score = area;
+      if(!v.paused){
+        score = score * 2;
+      }
+      if(doc && doc.fullscreenElement && doc.fullscreenElement.contains && doc.fullscreenElement.contains(v)){
+        score = score * 3;
+      }
+      return score;
+    }
+
+    function getPrimaryVideo(){
       var best = null;
       var bestScore = -1;
 
-      for(var i = 0; i < videos.length; i++){
-        var v = videos[i];
-        if(!v || !v.getBoundingClientRect){
-          continue;
+      function scanDocument(doc, offsetX, offsetY, depth){
+        if(!doc || depth <= 0){
+          return;
         }
 
-        var rect = v.getBoundingClientRect();
-        if(rect.width <= 0 || rect.height <= 0){
-          continue;
+        var videos;
+        try{
+          videos = doc.querySelectorAll('video');
+        }catch(e){
+          videos = null;
         }
 
-        var area = rect.width * rect.height;
-        var score = area;
-        if(!v.paused){
-          score = score * 2;
-        }
-        if(document.fullscreenElement && document.fullscreenElement.contains && document.fullscreenElement.contains(v)){
-          score = score * 3;
+        if(videos && videos.length){
+          for(var i = 0; i < videos.length; i++){
+            var v = videos[i];
+            if(!v || !v.getBoundingClientRect){
+              continue;
+            }
+
+            var r = v.getBoundingClientRect();
+            // Normalize into the top document's viewport coordinate space.
+            var rect = {
+              left: r.left + offsetX,
+              top: r.top + offsetY,
+              right: r.right + offsetX,
+              bottom: r.bottom + offsetY,
+              width: r.width,
+              height: r.height
+            };
+
+            var s = scoreVideo(v, rect, doc);
+            if(s > bestScore){
+              best = v;
+              bestScore = s;
+            }
+          }
         }
 
-        if(score > bestScore){
-          best = v;
-          bestScore = score;
+        var iframes;
+        try{
+          iframes = doc.querySelectorAll('iframe');
+        }catch(e2){
+          iframes = null;
+        }
+
+        if(iframes && iframes.length){
+          for(var j = 0; j < iframes.length; j++){
+            var fr = iframes[j];
+            if(!fr || !fr.getBoundingClientRect){
+              continue;
+            }
+
+            var frRect = fr.getBoundingClientRect();
+
+            var childDoc = null;
+            try{
+              childDoc = fr.contentDocument;
+            }catch(e3){
+              childDoc = null;
+            }
+
+            if(!childDoc){
+              continue;
+            }
+
+            scanDocument(childDoc, offsetX + frRect.left, offsetY + frRect.top, depth - 1);
+          }
         }
       }
 
-      return best || videos[0] || null;
+      scanDocument(document, 0, 0, 3);
+      return best;
     }
 
     function seekBy(video, deltaSeconds){
@@ -200,6 +259,19 @@
         return;
       }
 
+      if(!_scrimStyleInjected){
+        _scrimStyleInjected = true;
+
+        var $head = document.head || document.documentElement;
+        if($head){
+          var $style = document.createElement('style');
+          $style.setAttribute('type','text/css');
+          $style.setAttribute('data-type','vuic-scrim-override');
+          $style.textContent = "["+SCRIM_ATTR+"=\"1\"]{background:transparent !important;background-color:transparent !important;background-image:none !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important}["+SCRIM_ATTR+"=\"1\"]::before,["+SCRIM_ATTR+"=\"1\"]::after{background:transparent !important;background-color:transparent !important;background-image:none !important;opacity:0 !important;backdrop-filter:none !important;-webkit-backdrop-filter:none !important;box-shadow:none !important}";
+          $head.appendChild($style);
+        }
+      }
+
       if(_scrimSeen){
         if(_scrimSeen.has(el)){
           return;
@@ -207,11 +279,57 @@
         _scrimSeen.add(el);
       }
 
+      try{
+        el.setAttribute(SCRIM_ATTR,'1');
+      }catch(e0){}
+
       el.style.setProperty('background', 'transparent', 'important');
       el.style.setProperty('background-color', 'transparent', 'important');
       el.style.setProperty('background-image', 'none', 'important');
       el.style.setProperty('backdrop-filter', 'none', 'important');
       el.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
+    }
+
+    function elementHasScrimBackground(el){
+      if(!el || !window.getComputedStyle){
+        return false;
+      }
+
+      var style = window.getComputedStyle(el);
+      if(!style){
+        return false;
+      }
+
+      if(style.display === 'none' || style.visibility === 'hidden'){
+        return false;
+      }
+
+      var bgAlpha = alphaFromCssColor(style.backgroundColor);
+      var bgImage = style.backgroundImage || '';
+      if(bgAlpha > 0 || (bgImage && bgImage !== 'none')){
+        return true;
+      }
+
+      // Some players render the dim overlay with a pseudo-element.
+      var before = window.getComputedStyle(el,'::before');
+      if(before && before.content && before.content !== 'none'){
+        var a1 = alphaFromCssColor(before.backgroundColor);
+        var i1 = before.backgroundImage || '';
+        if(a1 > 0 || (i1 && i1 !== 'none')){
+          return true;
+        }
+      }
+
+      var after = window.getComputedStyle(el,'::after');
+      if(after && after.content && after.content !== 'none'){
+        var a2 = alphaFromCssColor(after.backgroundColor);
+        var i2 = after.backgroundImage || '';
+        if(a2 > 0 || (i2 && i2 !== 'none')){
+          return true;
+        }
+      }
+
+      return false;
     }
 
     // Best-effort: if a player shows a fullscreen scrim on seek, make it transparent.
@@ -231,37 +349,48 @@
         return;
       }
 
-      var stack = document.elementsFromPoint(x, y);
-      if(!stack || stack.length === 0){
+      var stack = [];
+
+      function pushFromPoint(px, py){
+        var els = document.elementsFromPoint(px, py);
+        if(!els){
+          return;
+        }
+        for(var i = 0; i < els.length; i++){
+          stack.push(els[i]);
+        }
+      }
+
+      // Sample a few points, since overlays sometimes don't cover the center.
+      pushFromPoint(x, y);
+      pushFromPoint(vr.left + 10, vr.top + 10);
+      pushFromPoint(vr.right - 10, vr.top + 10);
+      pushFromPoint(vr.left + 10, vr.bottom - 10);
+      pushFromPoint(vr.right - 10, vr.bottom - 10);
+
+      if(stack.length === 0){
         return;
       }
 
+      var seen = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
       var videoArea = vr.width * vr.height;
-      for(var i = 0; i < stack.length; i++){
-        var el = stack[i];
+
+      for(var k = 0; k < stack.length; k++){
+        var el = stack[k];
         if(!el || el === video){
           continue;
         }
-        if(video.contains && video.contains(el)){
-          continue;
+        if(seen){
+          if(seen.has(el)){
+            continue;
+          }
+          seen.add(el);
         }
         if(!el.getBoundingClientRect){
           continue;
         }
 
-        var style = window.getComputedStyle ? window.getComputedStyle(el) : null;
-        if(!style){
-          continue;
-        }
-
-        if(style.display === 'none' || style.visibility === 'hidden'){
-          continue;
-        }
-
-        var bgAlpha = alphaFromCssColor(style.backgroundColor);
-        var bgImage = style.backgroundImage || '';
-        var hasBg = bgAlpha > 0 || (bgImage && bgImage !== 'none');
-        if(!hasBg){
+        if(!elementHasScrimBackground(el)){
           continue;
         }
 
@@ -273,14 +402,37 @@
           continue;
         }
 
-        // Only touch elements that cover a substantial portion of the video.
-        if((overlapArea / videoArea) < 0.4){
+        if((overlapArea / videoArea) < 0.25){
           continue;
         }
 
         neutralizeScrimElement(el);
+        // Don't return immediately; there can be multiple overlapping scrims.
+      }
+    }
+
+    function scheduleScrimNeutralize(maybeVideo){
+      if(_scrimRaf){
         return;
       }
+
+      _scrimRaf = window.requestAnimationFrame(function(){
+        _scrimRaf = 0;
+
+        var v = (maybeVideo && maybeVideo.nodeName === 'VIDEO') ? maybeVideo : null;
+        if(!v){
+          v = getPrimaryVideo();
+        }
+        if(!v){
+          return;
+        }
+
+        if(!isLikelyPlayerPage(v)){
+          return;
+        }
+
+        neutralizeScrimOverVideo(v);
+      });
     }
 
     function normalizeKey(e){
@@ -295,35 +447,49 @@
       return '';
     }
 
-    function onKeyDown(e){
+    function getSeekDeltaForEvent(e){
       if(!e){
-        return;
+        return null;
       }
-
       if(e.metaKey || e.ctrlKey || e.altKey){
-        return;
+        return null;
       }
 
       if(e.isComposing){
-        return;
+        return null;
       }
 
       if(isEditableTarget(e.target)){
-        return;
+        return null;
       }
 
       var key = normalizeKey(e);
-      var delta = null;
-
       if(key === 'ArrowRight'){
-        delta = e.shiftKey ? SEEK_SECONDS_BIG : SEEK_SECONDS;
+        return e.shiftKey ? SEEK_SECONDS_BIG : SEEK_SECONDS;
       }else if(key === 'ArrowLeft'){
-        delta = -(e.shiftKey ? SEEK_SECONDS_BIG : SEEK_SECONDS);
+        return -(e.shiftKey ? SEEK_SECONDS_BIG : SEEK_SECONDS);
       }else if(key === 'l' || key === 'L'){
-        delta = SEEK_SECONDS;
+        return SEEK_SECONDS;
       }else if(key === 'j' || key === 'J'){
-        delta = -SEEK_SECONDS;
-      }else{
+        return -SEEK_SECONDS;
+      }
+
+      return null;
+    }
+
+    function blockEvent(e){
+      e.preventDefault();
+      if(e.stopImmediatePropagation){
+        e.stopImmediatePropagation();
+      }
+      if(e.stopPropagation){
+        e.stopPropagation();
+      }
+    }
+
+    function onKeyDown(e){
+      var delta = getSeekDeltaForEvent(e);
+      if(delta === null){
         return;
       }
 
@@ -338,25 +504,84 @@
       }
 
       // Block the site's handler (which often shows the dimming overlay).
-      e.preventDefault();
-      if(e.stopImmediatePropagation){
-        e.stopImmediatePropagation();
-      }
-      if(e.stopPropagation){
-        e.stopPropagation();
-      }
+      blockEvent(e);
 
       seekBy(video, delta);
 
       // If the player still shows a scrim on seek, make it transparent.
+      scheduleScrimNeutralize(video);
       setTimeout(function(){
-        neutralizeScrimOverVideo(video);
-      },0);
+        scheduleScrimNeutralize(video);
+      },50);
+    }
+
+    function onKeyUp(e){
+      // Some players show the overlay on keyup; block it if we handle the key.
+      var delta = getSeekDeltaForEvent(e);
+      if(delta === null){
+        return;
+      }
+
+      var video = getPrimaryVideo();
+      if(!video){
+        return;
+      }
+
+      if(!isLikelyPlayerPage(video)){
+        return;
+      }
+
+      blockEvent(e);
+      scheduleScrimNeutralize(video);
     }
 
     function bind(){
       // Capture phase + document_start helps us run before the site registers its listeners.
       window.addEventListener('keydown', onKeyDown, true);
+      window.addEventListener('keyup', onKeyUp, true);
+
+      // Remove the dimmer overlay when controls appear (hover/move usually triggers it).
+      window.addEventListener('mousemove', scheduleScrimNeutralize, true);
+      window.addEventListener('pointermove', scheduleScrimNeutralize, true);
+      window.addEventListener('mouseover', scheduleScrimNeutralize, true);
+      window.addEventListener('focus', scheduleScrimNeutralize, true);
+      document.addEventListener('fullscreenchange', scheduleScrimNeutralize, true);
+
+      if(typeof MutationObserver !== 'undefined'){
+        try{
+          var root = document.documentElement;
+          if(root){
+            var obs = new MutationObserver(function(mutations){
+              for(var i = 0; i < mutations.length; i++){
+                var m = mutations[i];
+                if(m.type === 'attributes'){
+                  if(m.attributeName === SCRIM_ATTR){
+                    continue;
+                  }
+                  var t = m.target;
+                  if(t && t.getAttribute && t.getAttribute(SCRIM_ATTR) === '1'){
+                    continue;
+                  }
+                }
+                scheduleScrimNeutralize();
+                break;
+              }
+            });
+
+            obs.observe(root,{
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['class','style',SCRIM_ATTR]
+            });
+          }
+        }catch(e){}
+      }
+
+      // Kick once after initial layout.
+      setTimeout(function(){
+        scheduleScrimNeutralize();
+      },250);
     }
 
     return {
