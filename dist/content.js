@@ -47,6 +47,7 @@
     var _scrimStyleInjected = false;
     var SCRIM_ATTR = 'data-vuic-scrim';
     var _scrimRaf = 0;
+    var _scrimScanLast = 0;
 
     function isPrimeLikeHost(){
       var host = (window.location && window.location.hostname) ? window.location.hostname : '';
@@ -55,6 +56,11 @@
 
     function hasPrimePlayerDom(){
       return !!document.querySelector('.atvwebplayersdk-player-container,.atvwebplayersdk-overlays-container,.cascadesContainer .webPlayer');
+    }
+
+    function isMaxLikeHost(){
+      var host = (window.location && window.location.hostname) ? window.location.hostname : '';
+      return host.indexOf('max.com') !== -1 || host.indexOf('hbomax.com') !== -1;
     }
 
     function isVideoLargeEnough(video){
@@ -254,6 +260,25 @@
       return isNaN(alpha) ? 1 : alpha;
     }
 
+    function elementIndicatesScrim(style){
+      if(!style){
+        return false;
+      }
+
+      var bgAlpha = alphaFromCssColor(style.backgroundColor);
+      var bgImage = style.backgroundImage || '';
+      if(bgAlpha > 0 || (bgImage && bgImage !== 'none')){
+        return true;
+      }
+
+      var backdrop = style.backdropFilter || style.webkitBackdropFilter || '';
+      if(backdrop && backdrop !== 'none'){
+        return true;
+      }
+
+      return false;
+    }
+
     function neutralizeScrimElement(el){
       if(!el || !el.style){
         return;
@@ -304,32 +329,153 @@
         return false;
       }
 
-      var bgAlpha = alphaFromCssColor(style.backgroundColor);
-      var bgImage = style.backgroundImage || '';
-      if(bgAlpha > 0 || (bgImage && bgImage !== 'none')){
+      if(elementIndicatesScrim(style)){
         return true;
       }
 
       // Some players render the dim overlay with a pseudo-element.
       var before = window.getComputedStyle(el,'::before');
-      if(before && before.content && before.content !== 'none'){
-        var a1 = alphaFromCssColor(before.backgroundColor);
-        var i1 = before.backgroundImage || '';
-        if(a1 > 0 || (i1 && i1 !== 'none')){
+      if(before && before.display !== 'none' && before.visibility !== 'hidden'){
+        var op1 = parseFloat(before.opacity);
+        if(isNaN(op1)){ op1 = 1; }
+        if(op1 > 0 && elementIndicatesScrim(before)){
           return true;
         }
       }
 
       var after = window.getComputedStyle(el,'::after');
-      if(after && after.content && after.content !== 'none'){
-        var a2 = alphaFromCssColor(after.backgroundColor);
-        var i2 = after.backgroundImage || '';
-        if(a2 > 0 || (i2 && i2 !== 'none')){
+      if(after && after.display !== 'none' && after.visibility !== 'hidden'){
+        var op2 = parseFloat(after.opacity);
+        if(isNaN(op2)){ op2 = 1; }
+        if(op2 > 0 && elementIndicatesScrim(after)){
           return true;
         }
       }
 
       return false;
+    }
+
+    function rectOverlapFraction(a, b){
+      var overlapW = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+      var overlapH = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+      var overlapArea = overlapW * overlapH;
+      var aArea = a.width * a.height;
+      if(aArea <= 0){
+        return 0;
+      }
+      return overlapArea / aArea;
+    }
+
+    function neutralizeVideoFilters(video){
+      // Some players dim by applying a brightness/opacity filter to the video or a wrapper.
+      if(!video || !video.style || !window.getComputedStyle){
+        return;
+      }
+
+      var vStyle = window.getComputedStyle(video);
+      if(vStyle){
+        var f = vStyle.filter || '';
+        if(f && f !== 'none' && f.indexOf('brightness') !== -1){
+          video.style.setProperty('filter','none','important');
+        }
+      }
+
+      // Walk up a short ancestor chain and remove brightness filters.
+      var el = video.parentElement;
+      for(var i = 0; i < 6 && el; i++){
+        var s = window.getComputedStyle(el);
+        if(s){
+          var f2 = s.filter || '';
+          if(f2 && f2 !== 'none' && f2.indexOf('brightness') !== -1){
+            try{
+              el.style.setProperty('filter','none','important');
+            }catch(e0){}
+          }
+        }
+        el = el.parentElement;
+      }
+    }
+
+    function scanForPointerNoneScrims(video){
+      if(!video || !video.getBoundingClientRect || !window.getComputedStyle){
+        return;
+      }
+
+      // Avoid doing a full scan too frequently.
+      var now = Date.now();
+      if(now - _scrimScanLast < 500){
+        return;
+      }
+      _scrimScanLast = now;
+
+      var vr = video.getBoundingClientRect();
+      if(vr.width <= 0 || vr.height <= 0){
+        return;
+      }
+
+      var root = document.body || document.documentElement;
+      if(!root){
+        return;
+      }
+
+      // BFS, but keep it bounded for performance.
+      var q = [{ el: root, depth: 0 }];
+      var visited = 0;
+      var maxVisited = 800;
+      var maxDepth = 9;
+
+      while(q.length){
+        var item = q.shift();
+        var el = item.el;
+        var depth = item.depth;
+
+        if(!el || el.nodeType !== 1){
+          continue;
+        }
+
+        visited++;
+        if(visited > maxVisited){
+          break;
+        }
+
+        var er;
+        try{
+          er = el.getBoundingClientRect();
+        }catch(e1){
+          er = null;
+        }
+        if(!er || er.width <= 0 || er.height <= 0){
+          // still traverse children; some containers have zero rect but children don't.
+        }else{
+          var overlap = rectOverlapFraction(vr, er);
+          if(overlap >= 0.03){
+            var s = window.getComputedStyle(el);
+            if(s){
+              var pe = s.pointerEvents || '';
+              var pos = s.position || '';
+              // Prioritize likely scrims: pointer-events none, or overlay positions.
+              var likely = (pe === 'none') || (pos === 'fixed') || (pos === 'absolute') || (pos === 'sticky');
+              if(likely && elementHasScrimBackground(el)){
+                neutralizeScrimElement(el);
+              }
+            }
+          }
+        }
+
+        if(depth >= maxDepth){
+          continue;
+        }
+
+        // Enqueue children (cap per node).
+        var kids = el.children;
+        if(!kids || kids.length === 0){
+          continue;
+        }
+        var cap = Math.min(kids.length, 60);
+        for(var i2 = 0; i2 < cap; i2++){
+          q.push({ el: kids[i2], depth: depth + 1 });
+        }
+      }
     }
 
     // Best-effort: if a player shows a fullscreen scrim on seek, make it transparent.
@@ -395,19 +541,25 @@
         }
 
         var er = el.getBoundingClientRect();
-        var overlapW = Math.max(0, Math.min(vr.right, er.right) - Math.max(vr.left, er.left));
-        var overlapH = Math.max(0, Math.min(vr.bottom, er.bottom) - Math.max(vr.top, er.top));
-        var overlapArea = overlapW * overlapH;
         if(videoArea <= 0){
           continue;
         }
+        var frac = rectOverlapFraction(vr, er);
 
-        if((overlapArea / videoArea) < 0.25){
+        // Allow partial gradients/bars too (common on hover).
+        if(frac < 0.06){
           continue;
         }
 
         neutralizeScrimElement(el);
         // Don't return immediately; there can be multiple overlapping scrims.
+      }
+
+      // Additionally scan for pointer-events:none scrims which won't show up in elementsFromPoint().
+      scanForPointerNoneScrims(video);
+
+      if(isMaxLikeHost()){
+        neutralizeVideoFilters(video);
       }
     }
 
