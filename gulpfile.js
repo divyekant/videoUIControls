@@ -3,9 +3,7 @@ var del = require('del');
 var sass = require('gulp-dart-sass');
 var prefix = require('gulp-autoprefixer');
 var replace = require('gulp-replace');
-var flatten = require('gulp-flatten');
 var concat = require('gulp-concat');
-var minifyCSS = require('gulp-minify-css');
 var fs = require('fs');
 
 gulp.task('clean', function(){
@@ -17,16 +15,20 @@ gulp.task('clean', function(){
 
 gulp.task('buildCSS', function(){
   return gulp.src('./app/**/*.scss')
-      .pipe(sass())
+      .pipe(sass({ outputStyle: 'compressed' }))
       .pipe(prefix("last 2 versions"))
-      .pipe(flatten())
-      .pipe(minifyCSS())
       .pipe(concat('style.min.css'))
       .pipe(gulp.dest('./.tmp/app/base/css'));
 });
 
 gulp.task('buildContentScript', function(){
-  var styleStr = fs.readFileSync('./.tmp/app/base/css/style.min.css');
+  // Escape CSS so it can be safely injected into a double-quoted JS string.
+  var styleStr = fs.readFileSync('./.tmp/app/base/css/style.min.css','utf8')
+    .replace(/\\/g,'\\\\')
+    .replace(/"/g,'\\\"')
+    .replace(/\r?\n/g,'\\n')
+    .replace(/\u2028/g,'\\u2028')
+    .replace(/\u2029/g,'\\u2029');
 
   return gulp.src('./content.js')
       .pipe(replace(/<!-- tid:(.+?) -->/i, styleStr))

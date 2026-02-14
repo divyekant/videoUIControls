@@ -1,6 +1,6 @@
 {
   "name": "Video Controls",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Re-styling of Prime Video playback controls to be less intrusive.",
   "icons": {
     "128": "images/logoIcon.png"
@@ -15,11 +15,17 @@
         "https://www.amazon.jp/*",
         "https://www.amazon.co.jp/*",
         "https://www.amazon.co.uk/*",
-        "https://www.amazon.de/*"
+        "https://www.amazon.de/*",
+        "https://play.max.com/*",
+        "https://www.max.com/*",
+        "https://play.hbomax.com/*",
+        "https://www.hbomax.com/*"
       ],
       "js": [
         "dist/content.js"
-      ]
+      ],
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "action": {
